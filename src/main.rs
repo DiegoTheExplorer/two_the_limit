@@ -1,7 +1,6 @@
 mod game_state;
 
 use crate::game_state::tfe_tile::TileValue;
-use bevy::input::keyboard::Key;
 use bevy::{color::palettes::css::*, prelude::*};
 use game_state::grid::GameState;
 use game_state::tfe_tile::Position;
@@ -17,19 +16,20 @@ fn main() {
         }),
         ..default()
     }))
-    .add_systems(Startup, (spawn_layout, init_game).chain())
-    .add_systems(Update, (user_input_handler, shift_tiles))
     .add_event::<ShiftTilesTrigger>()
+    .add_event::<SpawnTile>()
+    .init_resource::<GameState>()
+    .add_systems(Startup, (spawn_layout, init_game).chain())
+    .add_systems(
+        Update,
+        (user_input_handler, shift_tiles, spawn_tile, update_ui).chain(),
+    )
     .run();
 }
 
 fn spawn_layout(mut commands: Commands, asset_server: Res<AssetServer>) {
     let font = asset_server.load("fonts/TerminessNerdFont-Regular.ttf");
     commands.spawn(Camera2d);
-    commands.insert_resource(GameState {
-        ..Default::default()
-    });
-    commands.init_resource::<GameState>();
 
     commands
         .spawn((
@@ -78,7 +78,7 @@ fn spawn_layout(mut commands: Commands, asset_server: Res<AssetServer>) {
                 .with_children(|builder| {
                     for x in 1..5 {
                         for y in 1..5 {
-                            spawn_tile(builder, LIGHT_GRAY, Position { x, y });
+                            spawn_ui_tile(builder, LIGHT_GRAY, Position { x, y });
                         }
                     }
                 });
@@ -122,13 +122,13 @@ fn spawn_layout(mut commands: Commands, asset_server: Res<AssetServer>) {
         });
 }
 
-fn spawn_tile(builder: &mut ChildSpawnerCommands, color: Srgba, pos: Position) {
+fn spawn_ui_tile(builder: &mut ChildSpawnerCommands, color: Srgba, pos: Position) {
     builder.spawn((
         Node {
             display: Display::Grid,
             padding: UiRect::all(Val::Px(3.0)),
-            grid_column: GridPlacement::start(pos.x),
-            grid_row: GridPlacement::start(pos.y),
+            grid_column: GridPlacement::start(pos.y),
+            grid_row: GridPlacement::start(pos.x),
             align_content: AlignContent::Center,
             ..default()
         },
@@ -171,12 +171,30 @@ fn init_game(
         y: rng.random_range(1..5),
     };
 
-    game_state.grid[init_tile_1.y as usize][init_tile_1.x as usize] = 2;
-    game_state.grid[init_tile_2.y as usize][init_tile_2.x as usize] = 2;
+    game_state.grid[(init_tile_1.y - 1) as usize][(init_tile_1.x - 1) as usize] = 2;
+    game_state.grid[(init_tile_2.y - 1) as usize][(init_tile_2.x - 1) as usize] = 2;
+}
+
+fn spawn_tile(mut events: EventReader<SpawnTile>, game_state: ResMut<GameState>) {
+    events.read().for_each(|_| {
+        let mut rng = rand::rng();
+        let mut x = rng.random_range(0..4);
+        let mut y = rng.random_range(0..4);
+
+        while game_state.grid[x][y] != 0 {
+            x = rng.random_range(0..4);
+            y = rng.random_range(0..4);
+        }
+
+        game_state.grid[y][x];
+    });
 }
 
 #[derive(Event)]
 struct ShiftTilesTrigger(KeyCode);
+
+#[derive(Event)]
+struct SpawnTile;
 
 fn user_input_handler(
     mut ev_shift_tiles: EventWriter<ShiftTilesTrigger>,
@@ -196,8 +214,107 @@ fn user_input_handler(
     }
 }
 
+fn has_adjacent_dupes(arr: &[i32; 4]) -> bool {
+    let mut iter = arr.iter().filter(|val| **val != 0).peekable();
+    while let Some(current) = iter.next() {
+        if let Some(next) = iter.peek() {
+            if *current == **next {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn shift_zeroes_right(arr: &mut [i32; 4]) {
+    let mut temp;
+    for i in 0..3 {
+        for j in (i + 1)..4 {
+            if arr[i] == 0 {
+                temp = arr[j];
+                arr[j] = 0;
+                arr[i] = temp;
+            }
+        }
+    }
+}
+
 fn shift_tiles(
+    mut ew: EventWriter<SpawnTile>,
     mut events: EventReader<ShiftTilesTrigger>,
+    mut game_state: ResMut<GameState>,
+) {
+    events.read().for_each(|event| {
+        match event.0 {
+            KeyCode::ArrowLeft => {
+                for y in 0..4 {
+                    if game_state.grid[y].iter().all(|val| *val == 0) {
+                        continue;
+                    }
+
+                    let mut temp_arr = [0; 4];
+                    temp_arr.clone_from_slice(&game_state.grid[y]);
+                    temp_arr.reverse();
+
+                    // Combination no jutsu
+                    while has_adjacent_dupes(&temp_arr) {
+                        shift_zeroes_right(&mut temp_arr);
+                    }
+
+                    temp_arr.reverse();
+                    for i in 0..4 {
+                        game_state.grid[y][i] = temp_arr[i];
+                    }
+                }
+                debug_game_state(&game_state);
+            }
+            KeyCode::ArrowRight => {
+                debug_game_state(&game_state);
+            }
+            KeyCode::ArrowUp => {
+                for y in 1..4 {
+                    for x in 0..4 {
+                        if game_state.grid[y][x] == 0 {
+                            continue;
+                        }
+                        game_state.grid[y - 1][x] = game_state.grid[y][x];
+                        game_state.grid[y][x] = 0;
+                    }
+                }
+                debug_game_state(&game_state);
+            }
+            KeyCode::ArrowDown => {
+                for y in (0..3).rev() {
+                    for x in (0..4).rev() {
+                        if game_state.grid[y][x] == 0 {
+                            continue;
+                        }
+                        game_state.grid[y + 1][x] = game_state.grid[y][x];
+                        game_state.grid[y][x] = 0;
+                    }
+                }
+                debug_game_state(&game_state);
+            }
+            _ => {}
+        }
+        ew.write(SpawnTile);
+    });
+}
+
+fn debug_game_state(game_state: &ResMut<GameState>) {
+    for y in 0..4 {
+        info!(
+            "[{}, {}, {}, {}]",
+            game_state.grid[y][0],
+            game_state.grid[y][1],
+            game_state.grid[y][2],
+            game_state.grid[y][3]
+        );
+    }
+    info!("_________________________")
+}
+
+fn update_ui(
     mut tiles: Query<(
         &mut Node,
         &mut BackgroundColor,
@@ -205,6 +322,13 @@ fn shift_tiles(
         &mut TileValue,
         &mut Text,
     )>,
+    game_state: Res<GameState>,
 ) {
-    events.read().for_each(|key_press| {});
+    let gs_iter = game_state.grid.iter().flatten();
+    tiles
+        .iter_mut()
+        .zip(gs_iter)
+        .for_each(|((node, bgc, pos, tv, mut txt), g_val)| {
+            txt.0 = g_val.to_string();
+        });
 }
