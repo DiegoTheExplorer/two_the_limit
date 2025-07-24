@@ -240,14 +240,13 @@ fn shift_zeroes_left(arr: &mut [i32; 4]) {
 }
 
 fn combine_dupes(arr: &mut [i32; 4]) {
-    for i in 0..3 {
+    for i in (0..3).rev() {
         if arr[i] == 0 {
             continue;
         }
         if arr[i] == arr[i + 1] {
             arr[i] = 0;
             arr[i + 1] *= 2;
-            info!("curr: {}, next: {}", arr[i], arr[i + 1]);
         }
     }
 }
@@ -423,16 +422,6 @@ fn update_ui(
     )>,
     game_state: &ResMut<GameState>,
 ) {
-    info!("GAME STATE WHILE UPDATING UI");
-    for y in 0..4 {
-        info!(
-            "[{}, {}, {}, {}]",
-            game_state.grid[y][0],
-            game_state.grid[y][1],
-            game_state.grid[y][2],
-            game_state.grid[y][3]
-        );
-    }
     tiles
         .iter_mut()
         .for_each(|(_node, mut bgc, pos, mut tv, mut txt, mut font)| {
@@ -448,63 +437,63 @@ fn update_ui(
                 16 => {
                     bgc.0 = RED.into();
                     *font = TextFont {
-                        font_size: 150.0,
+                        font_size: 175.0,
                         ..default()
                     };
                 }
                 32 => {
                     bgc.0 = ORANGE.into();
                     *font = TextFont {
-                        font_size: 150.0,
+                        font_size: 175.0,
                         ..default()
                     };
                 }
                 64 => {
                     bgc.0 = YELLOW_GREEN.into();
                     *font = TextFont {
-                        font_size: 150.0,
+                        font_size: 175.0,
                         ..default()
                     };
                 }
                 128 => {
                     bgc.0 = GREEN.into();
                     *font = TextFont {
-                        font_size: 100.0,
+                        font_size: 150.0,
                         ..default()
                     };
                 }
                 256 => {
                     bgc.0 = PINK.into();
                     *font = TextFont {
-                        font_size: 100.0,
+                        font_size: 150.0,
                         ..default()
                     };
                 }
                 512 => {
                     bgc.0 = BROWN.into();
                     *font = TextFont {
-                        font_size: 100.0,
+                        font_size: 150.0,
                         ..default()
                     };
                 }
                 1028 => {
                     bgc.0 = SILVER.into();
                     *font = TextFont {
-                        font_size: 75.0,
+                        font_size: 125.0,
                         ..default()
                     };
                 }
                 2048 => {
                     bgc.0 = GOLD.into();
                     *font = TextFont {
-                        font_size: 75.0,
+                        font_size: 125.0,
                         ..default()
                     };
                 }
                 _ => {
                     bgc.0 = TURQUOISE.into();
                     *font = TextFont {
-                        font_size: 25.0,
+                        font_size: 100.0,
                         ..default()
                     };
                 }
