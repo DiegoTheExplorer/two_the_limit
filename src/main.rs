@@ -20,10 +20,7 @@ fn main() {
     .add_event::<SpawnTile>()
     .init_resource::<GameState>()
     .add_systems(Startup, (spawn_layout, init_game).chain())
-    .add_systems(
-        Update,
-        (user_input_handler, shift_tiles, spawn_tile, update_ui).chain(),
-    )
+    .add_systems(Update, (user_input_handler, shift_tiles).chain())
     .run();
 }
 
@@ -76,8 +73,8 @@ fn spawn_layout(mut commands: Commands, asset_server: Res<AssetServer>) {
                     BackgroundColor(Color::srgb(0.25, 0.25, 0.25)),
                 ))
                 .with_children(|builder| {
-                    for x in 1..5 {
-                        for y in 1..5 {
+                    for y in 1..5 {
+                        for x in 1..5 {
                             spawn_ui_tile(builder, LIGHT_GRAY, Position { x, y });
                         }
                     }
@@ -127,8 +124,8 @@ fn spawn_ui_tile(builder: &mut ChildSpawnerCommands, color: Srgba, pos: Position
         Node {
             display: Display::Grid,
             padding: UiRect::all(Val::Px(3.0)),
-            grid_column: GridPlacement::start(pos.y),
-            grid_row: GridPlacement::start(pos.x),
+            grid_column: GridPlacement::start(pos.x),
+            grid_row: GridPlacement::start(pos.y),
             align_content: AlignContent::Center,
             ..default()
         },
@@ -152,15 +149,7 @@ fn spawn_nested_text_bundle(builder: &mut ChildSpawnerCommands, font: Handle<Fon
     ));
 }
 
-fn init_game(
-    mut tiles: Query<(
-        &mut BackgroundColor,
-        &mut Position,
-        &mut TileValue,
-        &mut Text,
-    )>,
-    mut game_state: ResMut<GameState>,
-) {
+fn init_game(mut game_state: ResMut<GameState>) {
     let mut rng = rand::rng();
     let init_tile_1 = Position {
         x: rng.random_range(1..5),
@@ -173,21 +162,22 @@ fn init_game(
 
     game_state.grid[(init_tile_1.y - 1) as usize][(init_tile_1.x - 1) as usize] = 2;
     game_state.grid[(init_tile_2.y - 1) as usize][(init_tile_2.x - 1) as usize] = 2;
+    info!("INITIAL GAME STATE");
+    debug_game_state(&game_state);
 }
 
-fn spawn_tile(mut events: EventReader<SpawnTile>, game_state: ResMut<GameState>) {
-    events.read().for_each(|_| {
-        let mut rng = rand::rng();
-        let mut x = rng.random_range(0..4);
-        let mut y = rng.random_range(0..4);
-
-        while game_state.grid[x][y] != 0 {
+fn spawn_tile(game_state: &mut ResMut<GameState>) {
+    let mut rng = rand::rng();
+    let mut x = rng.random_range(0..4);
+    let mut y = rng.random_range(0..4);
+    if game_state.grid[y][x] != 0 {
+        while game_state.grid[y][x] != 0 {
             x = rng.random_range(0..4);
             y = rng.random_range(0..4);
         }
+    }
 
-        game_state.grid[y][x];
-    });
+    game_state.grid[y][x] = 2;
 }
 
 #[derive(Event)]
@@ -227,24 +217,56 @@ fn has_adjacent_dupes(arr: &[i32; 4]) -> bool {
 }
 
 fn shift_zeroes_right(arr: &mut [i32; 4]) {
-    let mut temp;
+    let mut temp = [0; 4];
+    temp.clone_from_slice(arr);
+    for i in 0..arr.len() {
+        arr[i] = 0;
+    }
+    for (i, val) in temp.iter().filter(|val| **val != 0).enumerate() {
+        arr[i] = *val;
+    }
+}
+
+fn shift_zeroes_left(arr: &mut [i32; 4]) {
+    let mut temp = [0; 4];
+    temp.clone_from_slice(arr);
+    for i in 0..arr.len() {
+        arr[i] = 0;
+    }
+    let zero_count = temp.iter().filter(|val| **val == 0).count();
+    for (i, val) in temp.iter().filter(|val| **val != 0).enumerate() {
+        arr[zero_count + i] = *val;
+    }
+}
+
+fn combine_dupes(arr: &mut [i32; 4]) {
     for i in 0..3 {
-        for j in (i + 1)..4 {
-            if arr[i] == 0 {
-                temp = arr[j];
-                arr[j] = 0;
-                arr[i] = temp;
-            }
+        if arr[i] == 0 {
+            continue;
+        }
+        if arr[i] == arr[i + 1] {
+            arr[i] = 0;
+            arr[i + 1] *= 2;
+            info!("curr: {}, next: {}", arr[i], arr[i + 1]);
         }
     }
 }
 
 fn shift_tiles(
-    mut ew: EventWriter<SpawnTile>,
+    mut tiles: Query<(
+        &mut Node,
+        &mut BackgroundColor,
+        &mut Position,
+        &mut TileValue,
+        &mut Text,
+        &mut TextFont,
+    )>,
     mut events: EventReader<ShiftTilesTrigger>,
     mut game_state: ResMut<GameState>,
 ) {
     events.read().for_each(|event| {
+        let mut tiles_shifted = false;
+
         match event.0 {
             KeyCode::ArrowLeft => {
                 for y in 0..4 {
@@ -253,51 +275,127 @@ fn shift_tiles(
                     }
 
                     let mut temp_arr = [0; 4];
+                    let mut before_shift_arr = [0; 4];
                     temp_arr.clone_from_slice(&game_state.grid[y]);
-                    temp_arr.reverse();
+                    before_shift_arr.clone_from_slice(&game_state.grid[y]);
 
-                    // Combination no jutsu
                     while has_adjacent_dupes(&temp_arr) {
                         shift_zeroes_right(&mut temp_arr);
+                        temp_arr.reverse();
+                        combine_dupes(&mut temp_arr);
+                        temp_arr.reverse();
+                        shift_zeroes_right(&mut temp_arr);
+                        if !tiles_shifted {
+                            tiles_shifted = true;
+                        }
                     }
 
-                    temp_arr.reverse();
+                    shift_zeroes_right(&mut temp_arr);
+                    if !before_shift_arr.eq(&temp_arr) {
+                        tiles_shifted = true;
+                    }
                     for i in 0..4 {
                         game_state.grid[y][i] = temp_arr[i];
                     }
                 }
-                debug_game_state(&game_state);
             }
             KeyCode::ArrowRight => {
-                debug_game_state(&game_state);
+                for y in 0..4 {
+                    if game_state.grid[y].iter().all(|val| *val == 0) {
+                        continue;
+                    }
+
+                    let mut temp_arr = [0; 4];
+                    let mut before_shift_arr = [0; 4];
+                    temp_arr.clone_from_slice(&game_state.grid[y]);
+                    before_shift_arr.clone_from_slice(&game_state.grid[y]);
+
+                    while has_adjacent_dupes(&temp_arr) {
+                        shift_zeroes_left(&mut temp_arr);
+                        combine_dupes(&mut temp_arr);
+                        shift_zeroes_left(&mut temp_arr);
+                        if !tiles_shifted {
+                            tiles_shifted = true;
+                        }
+                    }
+
+                    shift_zeroes_left(&mut temp_arr);
+                    if !before_shift_arr.eq(&temp_arr) {
+                        tiles_shifted = true;
+                    }
+                    for i in 0..4 {
+                        game_state.grid[y][i] = temp_arr[i];
+                    }
+                }
             }
             KeyCode::ArrowUp => {
-                for y in 1..4 {
-                    for x in 0..4 {
-                        if game_state.grid[y][x] == 0 {
-                            continue;
+                for x in 0..4 {
+                    let mut temp_arr = [0; 4];
+                    let mut before_shift_arr = [0; 4];
+                    for y in 0..4 {
+                        temp_arr[y] = game_state.grid[y][x];
+                    }
+                    if temp_arr.iter().all(|val| *val == 0) {
+                        continue;
+                    }
+                    before_shift_arr.clone_from_slice(&temp_arr);
+
+                    while has_adjacent_dupes(&temp_arr) {
+                        shift_zeroes_right(&mut temp_arr);
+                        temp_arr.reverse();
+                        combine_dupes(&mut temp_arr);
+                        temp_arr.reverse();
+                        shift_zeroes_right(&mut temp_arr);
+                        if !tiles_shifted {
+                            tiles_shifted = true;
                         }
-                        game_state.grid[y - 1][x] = game_state.grid[y][x];
-                        game_state.grid[y][x] = 0;
+                    }
+
+                    shift_zeroes_right(&mut temp_arr);
+                    if !before_shift_arr.eq(&temp_arr) {
+                        tiles_shifted = true;
+                    }
+                    for i in 0..4 {
+                        game_state.grid[i][x] = temp_arr[i];
                     }
                 }
-                debug_game_state(&game_state);
             }
             KeyCode::ArrowDown => {
-                for y in (0..3).rev() {
-                    for x in (0..4).rev() {
-                        if game_state.grid[y][x] == 0 {
-                            continue;
+                for x in 0..4 {
+                    let mut temp_arr = [0; 4];
+                    let mut before_shift_arr = [0; 4];
+                    for y in 0..4 {
+                        temp_arr[y] = game_state.grid[y][x];
+                    }
+                    if temp_arr.iter().all(|val| *val == 0) {
+                        continue;
+                    }
+                    before_shift_arr.clone_from_slice(&temp_arr);
+
+                    while has_adjacent_dupes(&temp_arr) {
+                        shift_zeroes_left(&mut temp_arr);
+                        combine_dupes(&mut temp_arr);
+                        shift_zeroes_left(&mut temp_arr);
+                        if !tiles_shifted {
+                            tiles_shifted = true;
                         }
-                        game_state.grid[y + 1][x] = game_state.grid[y][x];
-                        game_state.grid[y][x] = 0;
+                    }
+
+                    shift_zeroes_left(&mut temp_arr);
+                    if !before_shift_arr.eq(&temp_arr) {
+                        tiles_shifted = true;
+                    }
+                    for i in 0..4 {
+                        game_state.grid[i][x] = temp_arr[i];
                     }
                 }
-                debug_game_state(&game_state);
             }
             _ => {}
         }
-        ew.write(SpawnTile);
+        if tiles_shifted {
+            spawn_tile(&mut game_state);
+        }
+        update_ui(&mut tiles, &mut game_state);
     });
 }
 
@@ -315,20 +413,101 @@ fn debug_game_state(game_state: &ResMut<GameState>) {
 }
 
 fn update_ui(
-    mut tiles: Query<(
+    tiles: &mut Query<(
         &mut Node,
         &mut BackgroundColor,
         &mut Position,
         &mut TileValue,
         &mut Text,
+        &mut TextFont,
     )>,
-    game_state: Res<GameState>,
+    game_state: &ResMut<GameState>,
 ) {
-    let gs_iter = game_state.grid.iter().flatten();
+    info!("GAME STATE WHILE UPDATING UI");
+    for y in 0..4 {
+        info!(
+            "[{}, {}, {}, {}]",
+            game_state.grid[y][0],
+            game_state.grid[y][1],
+            game_state.grid[y][2],
+            game_state.grid[y][3]
+        );
+    }
     tiles
         .iter_mut()
-        .zip(gs_iter)
-        .for_each(|((node, bgc, pos, tv, mut txt), g_val)| {
-            txt.0 = g_val.to_string();
+        .for_each(|(_node, mut bgc, pos, mut tv, mut txt, mut font)| {
+            let (x, y) = (pos.x as usize, pos.y as usize);
+            let game_state_val = game_state.grid[y - 1][x - 1];
+            tv.val = game_state_val as u32;
+            txt.0 = game_state_val.to_string();
+            match game_state_val {
+                0 => bgc.0 = BLACK.into(),
+                2 => bgc.0 = DARK_GRAY.into(),
+                4 => bgc.0 = BLUE.into(),
+                8 => bgc.0 = PURPLE.into(),
+                16 => {
+                    bgc.0 = RED.into();
+                    *font = TextFont {
+                        font_size: 150.0,
+                        ..default()
+                    };
+                }
+                32 => {
+                    bgc.0 = ORANGE.into();
+                    *font = TextFont {
+                        font_size: 150.0,
+                        ..default()
+                    };
+                }
+                64 => {
+                    bgc.0 = YELLOW_GREEN.into();
+                    *font = TextFont {
+                        font_size: 150.0,
+                        ..default()
+                    };
+                }
+                128 => {
+                    bgc.0 = GREEN.into();
+                    *font = TextFont {
+                        font_size: 100.0,
+                        ..default()
+                    };
+                }
+                256 => {
+                    bgc.0 = PINK.into();
+                    *font = TextFont {
+                        font_size: 100.0,
+                        ..default()
+                    };
+                }
+                512 => {
+                    bgc.0 = BROWN.into();
+                    *font = TextFont {
+                        font_size: 100.0,
+                        ..default()
+                    };
+                }
+                1028 => {
+                    bgc.0 = SILVER.into();
+                    *font = TextFont {
+                        font_size: 75.0,
+                        ..default()
+                    };
+                }
+                2048 => {
+                    bgc.0 = GOLD.into();
+                    *font = TextFont {
+                        font_size: 75.0,
+                        ..default()
+                    };
+                }
+                _ => {
+                    bgc.0 = TURQUOISE.into();
+                    *font = TextFont {
+                        font_size: 25.0,
+                        ..default()
+                    };
+                }
+            }
         });
 }
